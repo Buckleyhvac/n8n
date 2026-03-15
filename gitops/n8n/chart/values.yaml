@@ -1,7 +1,1 @@
-n8n:
-  main:
-    config:
-      n8n:
-        host: n8n.local
-        protocol: http
-        port: 5678
+{}
