@@ -1,7 +1,4 @@
-main:
-  config:
-    N8N_SECURE_COOKIE: "false"
-
 service:
+  enabled: true
   type: NodePort
   port: 5678
