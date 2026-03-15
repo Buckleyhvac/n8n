@@ -104,7 +104,7 @@ describe('AuthController', () => {
 
 			expect(ldapService.handleLogin).toHaveBeenCalledWith(body.emailOrLdapLoginId, body.password);
 
-			expect(authService.issueCookie).toHaveBeenCalledWith(res, member, false, browserId);
+			expect(authService.issueAuthCookies).toHaveBeenCalledWith(res, member, false, browserId);
 			expect(eventsService.emit).toHaveBeenCalledWith('user-logged-in', {
 				user: member,
 				authenticationMethod: 'ldap',
@@ -152,7 +152,7 @@ describe('AuthController', () => {
 				body.emailOrLdapLoginId,
 				body.password,
 			);
-			expect(authService.issueCookie).not.toHaveBeenCalled();
+			expect(authService.issueAuthCookies).not.toHaveBeenCalled();
 		});
 
 		it('should allow owners to login with email if "OIDC" is the authentication method', async () => {
@@ -187,7 +187,7 @@ describe('AuthController', () => {
 				body.emailOrLdapLoginId,
 				body.password,
 			);
-			expect(authService.issueCookie).toHaveBeenCalledWith(res, member, false, '1');
+			expect(authService.issueAuthCookies).toHaveBeenCalledWith(res, member, false, '1');
 		});
 	});
 

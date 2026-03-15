@@ -2,6 +2,7 @@ import type { GlobalConfig } from '@n8n/config';
 import { Time } from '@n8n/constants';
 import type {
 	AuthenticatedRequest,
+	AuthRefreshTokenRepository,
 	User,
 	InvalidAuthTokenRepository,
 	UserRepository,
@@ -12,7 +13,7 @@ import { mock } from 'jest-mock-extended';
 import jwt from 'jsonwebtoken';
 
 import { AuthService } from '@/auth/auth.service';
-import { AUTH_COOKIE_NAME } from '@/constants';
+import { AUTH_COOKIE_NAME, REFRESH_AUTH_COOKIE_NAME } from '@/constants';
 import type { MfaService } from '@/mfa/mfa.service';
 import { JwtService } from '@/services/jwt.service';
 import type { UrlService } from '@/services/url.service';
@@ -37,6 +38,7 @@ describe('AuthService', () => {
 	const urlService = mock<UrlService>();
 	const userRepository = mock<UserRepository>();
 	const invalidAuthTokenRepository = mock<InvalidAuthTokenRepository>();
+	const authRefreshTokenRepository = mock<AuthRefreshTokenRepository>();
 	const mfaService = mock<MfaService>();
 	const license = mock<License>();
 	const authService = new AuthService(
@@ -47,6 +49,7 @@ describe('AuthService', () => {
 		urlService,
 		userRepository,
 		invalidAuthTokenRepository,
+		authRefreshTokenRepository,
 		mfaService,
 	);
 
@@ -66,6 +69,15 @@ describe('AuthService', () => {
 		globalConfig.userManagement.jwtRefreshTimeoutHours = 0;
 		globalConfig.auth.cookie = { secure: true, samesite: 'lax' };
 		license.isWithinUsersLimit.mockReturnValue(true);
+		(authRefreshTokenRepository as any).manager = {
+			transaction: jest.fn(async (run: (trx: unknown) => Promise<unknown>) =>
+				await run({
+					delete: jest.fn().mockResolvedValue({ affected: 1 }),
+					insert: jest.fn().mockResolvedValue(undefined),
+					findOne: jest.fn().mockResolvedValue(undefined),
+				}),
+			),
+		};
 	});
 
 	describe('createJWTHash', () => {
@@ -572,6 +584,32 @@ describe('AuthService', () => {
 		});
 	});
 
+	describe('issueAuthCookies', () => {
+		const res = mock<Response>();
+
+		it('should issue access and refresh cookies', async () => {
+			await authService.issueAuthCookies(res, user, false, browserId);
+
+			expect(res.cookie).toHaveBeenCalledWith('n8n-auth', validToken, {
+				httpOnly: true,
+				maxAge: 604800000,
+				sameSite: 'lax',
+				secure: true,
+			});
+			expect(res.cookie).toHaveBeenCalledWith(
+				REFRESH_AUTH_COOKIE_NAME,
+				expect.stringMatching(/^[a-f0-9]{64}$/),
+				{
+					httpOnly: true,
+					maxAge: authService.refreshTokenExpirationMs,
+					sameSite: 'lax',
+					secure: true,
+				},
+			);
+			expect(authRefreshTokenRepository.manager.transaction).toHaveBeenCalled();
+		});
+	});
+
 	describe('issueJWT', () => {
 		describe('when not setting userManagement.jwtSessionDuration', () => {
 			it('should default to expire in 7 days', () => {
@@ -854,6 +892,7 @@ describe('AuthService', () => {
 		const req = mock<AuthenticatedRequest>({
 			cookies: {
 				[AUTH_COOKIE_NAME]: validToken,
+				[REFRESH_AUTH_COOKIE_NAME]: 'refresh-token',
 			},
 		});
 
@@ -863,6 +902,9 @@ describe('AuthService', () => {
 			expect(invalidAuthTokenRepository.insert).toHaveBeenCalledWith({
 				token: validToken,
 				expiresAt: new Date('2024-02-08T01:23:45.000Z'),
+			});
+			expect(authRefreshTokenRepository.delete).toHaveBeenCalledWith({
+				tokenHash: expect.any(String),
 			});
 		});
 	});
@@ -886,6 +928,18 @@ describe('AuthService', () => {
 			const token = authService.getCookieToken(req);
 
 			expect(token).toBeUndefined();
+		});
+	});
+
+	describe('getRefreshCookieToken', () => {
+		it('should return refresh token from cookies', () => {
+			const req = mock<AuthenticatedRequest>({
+				cookies: { [REFRESH_AUTH_COOKIE_NAME]: 'refresh-token-123' },
+			});
+
+			const token = authService.getRefreshCookieToken(req);
+
+			expect(token).toBe('refresh-token-123');
 		});
 	});
 

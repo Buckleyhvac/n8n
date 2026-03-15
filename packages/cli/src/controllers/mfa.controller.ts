@@ -141,7 +141,7 @@ export class MFAController {
 			},
 		});
 
-		this.authService.issueCookie(res, updatedUser, verified, req.browserId);
+		await this.authService.issueAuthCookies(res, updatedUser, verified, req.browserId);
 	}
 
 	@Post('/disable', {
@@ -185,7 +185,7 @@ export class MFAController {
 			relations: ['role'],
 		});
 
-		this.authService.issueCookie(res, updatedUser, false, req.browserId);
+		await this.authService.issueAuthCookies(res, updatedUser, false, req.browserId);
 	}
 
 	@Post('/verify', {

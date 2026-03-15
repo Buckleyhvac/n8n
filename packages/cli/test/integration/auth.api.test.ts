@@ -5,7 +5,7 @@ import { Container } from '@n8n/di';
 import validator from 'validator';
 
 import config from '@/config';
-import { AUTH_COOKIE_NAME } from '@/constants';
+import { AUTH_COOKIE_NAME, REFRESH_AUTH_COOKIE_NAME } from '@/constants';
 import { MfaService } from '@/mfa/mfa.service';
 
 import { LOGGED_OUT_RESPONSE_BODY } from './shared/constants';
@@ -78,6 +78,8 @@ describe('POST /login', () => {
 
 		const authToken = utils.getAuthToken(response);
 		expect(authToken).toBeDefined();
+		const refreshToken = utils.getAuthToken(response, REFRESH_AUTH_COOKIE_NAME);
+		expect(refreshToken).toBeDefined();
 	});
 
 	test('should log user with MFA enabled', async () => {
@@ -121,6 +123,8 @@ describe('POST /login', () => {
 
 		const authToken = utils.getAuthToken(response);
 		expect(authToken).toBeDefined();
+		const refreshToken = utils.getAuthToken(response, REFRESH_AUTH_COOKIE_NAME);
+		expect(refreshToken).toBeDefined();
 	});
 
 	test('should throw AuthError for non-owner if not within users limit quota', async () => {
@@ -158,6 +162,38 @@ describe('POST /login', () => {
 
 		expect(response.statusCode).toBe(400);
 		expect(response.body.message).toBe('Invalid email address');
+	});
+});
+
+describe('POST /refresh', () => {
+	beforeEach(async () => {
+		owner = await createUser({
+			password: ownerPassword,
+			role: GLOBAL_OWNER_ROLE,
+		});
+	});
+
+	test('should rotate refresh token and issue a new auth token', async () => {
+		const loginResponse = await testServer.authlessAgent.post('/login').send({
+			emailOrLdapLoginId: owner.email,
+			password: ownerPassword,
+		});
+
+		const originalAuthToken = utils.getAuthToken(loginResponse);
+		const originalRefreshToken = utils.getAuthToken(loginResponse, REFRESH_AUTH_COOKIE_NAME);
+
+		expect(originalAuthToken).toBeDefined();
+		expect(originalRefreshToken).toBeDefined();
+
+		const refreshResponse = await testServer.authlessAgent.post('/refresh');
+
+		expect(refreshResponse.statusCode).toBe(200);
+		expect(utils.getAuthToken(refreshResponse)).toBeDefined();
+		expect(utils.getAuthToken(refreshResponse)).not.toBe(originalAuthToken);
+		expect(utils.getAuthToken(refreshResponse, REFRESH_AUTH_COOKIE_NAME)).toBeDefined();
+		expect(utils.getAuthToken(refreshResponse, REFRESH_AUTH_COOKIE_NAME)).not.toBe(
+			originalRefreshToken,
+		);
 	});
 });
 

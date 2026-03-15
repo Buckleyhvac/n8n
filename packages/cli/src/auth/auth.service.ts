@@ -1,11 +1,20 @@
-import { AUTH_COOKIE_NAME, RESPONSE_ERROR_MESSAGES } from '@/constants';
+import { AUTH_COOKIE_NAME, REFRESH_AUTH_COOKIE_NAME, RESPONSE_ERROR_MESSAGES } from '@/constants';
 import { Logger } from '@n8n/backend-common';
 import { GlobalConfig } from '@n8n/config';
 import { Time } from '@n8n/constants';
-import type { AuthenticatedRequest, User } from '@n8n/db';
-import { GLOBAL_OWNER_ROLE, InvalidAuthTokenRepository, UserRepository } from '@n8n/db';
+import {
+	AuthRefreshToken,
+	type AuthenticatedRequest,
+	GLOBAL_OWNER_ROLE,
+	InvalidAuthTokenRepository,
+	AuthRefreshTokenRepository,
+	User,
+	UserRepository,
+	withTransaction,
+} from '@n8n/db';
 import { Service } from '@n8n/di';
-import { createHash } from 'crypto';
+import { type EntityManager, MoreThanOrEqual } from '@n8n/typeorm';
+import { createHash, randomBytes } from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { JsonWebTokenError, TokenExpiredError } from 'jsonwebtoken';
 import type { StringValue as TimeUnitValue } from 'ms';
@@ -67,6 +76,7 @@ export class AuthService {
 		private readonly urlService: UrlService,
 		private readonly userRepository: UserRepository,
 		private readonly invalidAuthTokenRepository: InvalidAuthTokenRepository,
+		private readonly authRefreshTokenRepository: AuthRefreshTokenRepository,
 		private readonly mfaService: MfaService,
 	) {
 		const restEndpoint = globalConfig.endpoints.rest;
@@ -100,50 +110,59 @@ export class AuthService {
 	}: CreateAuthMiddlewareOptions) {
 		return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
 			const token = req.cookies[AUTH_COOKIE_NAME];
+			let authResult: [User, { usedMfa: boolean }] | undefined;
 
 			if (token) {
 				try {
 					const isInvalid = await this.invalidAuthTokenRepository.existsBy({ token });
 					if (isInvalid) throw new AuthError('Unauthorized');
 
-					const [user, { usedMfa }] = await this.resolveJwt(token, req, res);
-					const mfaEnforced = await this.mfaService.isMFAEnforced();
-
-					if (mfaEnforced && !usedMfa && !allowSkipMFA) {
-						// If MFA is enforced, we need to check if the user has MFA enabled and used it during authentication
-						if (user.mfaEnabled) {
-							// If the user has MFA enforced, but did not use it during authentication, we need to throw an error
-							throw new AuthError('MFA not used during authentication');
-						} else {
-							// User doesn't have MFA enabled, but MFA is enforced
-							// They need to set up MFA before accessing most endpoints
-							if (allowUnauthenticated) {
-								// Don't set req.user to avoid giving full access to semi-authenticated users
-								// Instead, set a flag in authInfo to indicate MFA enrollment is required
-								// This allows endpoints to handle this state appropriately (e.g., return public settings)
-								req.authInfo = {
-									usedMfa,
-									mfaEnrollmentRequired: true,
-								};
-								return next();
-							}
-
-							// In this case we don't want to clear the cookie, to allow for MFA setup
-							res.status(401).json({ status: 'error', message: 'Unauthorized', mfaRequired: true });
-							return;
-						}
-					}
-
-					req.user = user;
-					req.authInfo = {
-						usedMfa,
-					};
+					authResult = await this.resolveJwt(token, req, res);
 				} catch (error) {
-					if (error instanceof JsonWebTokenError || error instanceof AuthError) {
+					if (error instanceof TokenExpiredError || !token) {
+						authResult = await this.tryRefreshSession(req, res);
+					} else if (error instanceof JsonWebTokenError || error instanceof AuthError) {
 						this.clearCookie(res);
 					} else {
 						throw error;
 					}
+				}
+			} else {
+				authResult = await this.tryRefreshSession(req, res);
+			}
+
+			if (authResult) {
+				const [user, { usedMfa }] = authResult;
+				const mfaEnforced = await this.mfaService.isMFAEnforced();
+
+				if (mfaEnforced && !usedMfa && !allowSkipMFA) {
+					// If MFA is enforced, we need to check if the user has MFA enabled and used it during authentication
+					if (user.mfaEnabled) {
+						// If the user has MFA enforced, but did not use it during authentication, invalidate the session.
+						this.clearCookie(res);
+					} else {
+						// User doesn't have MFA enabled, but MFA is enforced
+						// They need to set up MFA before accessing most endpoints
+						if (allowUnauthenticated) {
+							// Don't set req.user to avoid giving full access to semi-authenticated users
+							// Instead, set a flag in authInfo to indicate MFA enrollment is required
+							// This allows endpoints to handle this state appropriately (e.g., return public settings)
+							req.authInfo = {
+								usedMfa,
+								mfaEnrollmentRequired: true,
+							};
+							return next();
+						}
+
+						// In this case we don't want to clear the cookie, to allow for MFA setup
+						res.status(401).json({ status: 'error', message: 'Unauthorized', mfaRequired: true });
+						return;
+					}
+				} else {
+					req.user = user;
+					req.authInfo = {
+						usedMfa,
+					};
 				}
 			}
 
@@ -161,6 +180,14 @@ export class AuthService {
 		if (typeof req.cookies === 'object' && req.cookies !== null) {
 			const cookies = req.cookies as Record<string, string | undefined>;
 			return cookies[AUTH_COOKIE_NAME];
+		}
+		return undefined;
+	}
+
+	getRefreshCookieToken(req: Request) {
+		if (typeof req.cookies === 'object' && req.cookies !== null) {
+			const cookies = req.cookies as Record<string, string | undefined>;
+			return cookies[REFRESH_AUTH_COOKIE_NAME];
 		}
 		return undefined;
 	}
@@ -183,6 +210,7 @@ export class AuthService {
 
 	clearCookie(res: Response) {
 		res.clearCookie(AUTH_COOKIE_NAME);
+		res.clearCookie(REFRESH_AUTH_COOKIE_NAME);
 	}
 
 	async invalidateToken(req: AuthenticatedRequest) {
@@ -198,6 +226,15 @@ export class AuthService {
 			}
 		} catch (e) {
 			this.logger.warn('failed to invalidate auth token', { error: (e as Error).message });
+		}
+
+		const refreshToken = this.getRefreshCookieToken(req);
+		if (!refreshToken) return;
+
+		try {
+			await this.authRefreshTokenRepository.delete({ tokenHash: this.hash(refreshToken) });
+		} catch (e) {
+			this.logger.warn('failed to invalidate refresh token', { error: (e as Error).message });
 		}
 	}
 
@@ -217,6 +254,17 @@ export class AuthService {
 			sameSite: samesite,
 			secure,
 		});
+	}
+
+	async issueAuthCookies(
+		res: Response,
+		user: User,
+		usedMfa: boolean,
+		browserId?: string,
+		currentRefreshToken?: string,
+	) {
+		await this.issueRefreshCookie(res, user, usedMfa, browserId, currentRefreshToken);
+		this.issueCookie(res, user, usedMfa, browserId);
 	}
 
 	issueJWT(user: User, usedMfa: boolean = false, browserId?: string) {
@@ -341,6 +389,70 @@ export class AuthService {
 		return [user, { usedMfa: jwtPayload.usedMfa ?? false }];
 	}
 
+	async refreshSession(
+		req: AuthenticatedRequest,
+		res: Response,
+	): Promise<[User, { usedMfa: boolean }]> {
+		const refreshToken = this.getRefreshCookieToken(req);
+		if (!refreshToken) throw new AuthError('Unauthorized');
+
+		const browserId = this.getBrowserId(req);
+		const browserIdHash = browserId ? this.hash(browserId) : null;
+		const { user, usedMfa, nextRefreshToken } = await withTransaction(
+			this.authRefreshTokenRepository.manager,
+			undefined,
+			async (trx: EntityManager) => {
+				const tokenHash = this.hash(refreshToken);
+				const refreshTokenRecord = await trx.findOne(AuthRefreshToken, {
+					where: { tokenHash },
+				});
+
+				if (!refreshTokenRecord) throw new AuthError('Unauthorized');
+
+				const deleteResult = await trx.delete(AuthRefreshToken, {
+					tokenHash,
+					expiresAt: MoreThanOrEqual(new Date()),
+				});
+
+				if ((deleteResult.affected ?? 0) < 1) {
+					throw new AuthError('Unauthorized');
+				}
+
+				const user = await trx.findOne(User, {
+					where: { id: refreshTokenRecord.userId },
+					relations: ['role'],
+				});
+
+				if (
+					!user ||
+					user.disabled ||
+					refreshTokenRecord.userHash !== this.createJWTHash(user) ||
+					(refreshTokenRecord.browserIdHash &&
+						(!browserIdHash || refreshTokenRecord.browserIdHash !== browserIdHash))
+				) {
+					throw new AuthError('Unauthorized');
+				}
+
+				const nextRefreshToken = randomBytes(32).toString('hex');
+				await trx.insert(AuthRefreshToken, {
+					tokenHash: this.hash(nextRefreshToken),
+					userId: user.id,
+					browserIdHash,
+					userHash: this.createJWTHash(user),
+					usedMfa: refreshTokenRecord.usedMfa,
+					expiresAt: new Date(Date.now() + this.refreshTokenExpirationMs),
+				});
+
+				return { user, usedMfa: refreshTokenRecord.usedMfa, nextRefreshToken };
+			},
+		);
+
+		this.issueCookie(res, user, usedMfa, browserId);
+		this.setRefreshCookie(res, nextRefreshToken);
+
+		return [user, { usedMfa }];
+	}
+
 	generatePasswordResetToken(user: User, expiresIn: TimeUnitValue = '20m') {
 		const payload: PasswordResetToken = { sub: user.id, hash: this.createJWTHash(user) };
 		return this.jwtService.sign(payload, { expiresIn });
@@ -402,6 +514,66 @@ export class AuthService {
 		return createHash('sha256').update(input).digest('base64');
 	}
 
+	private async tryRefreshSession(
+		req: AuthenticatedRequest,
+		res: Response,
+	): Promise<[User, { usedMfa: boolean }] | undefined> {
+		const refreshToken = this.getRefreshCookieToken(req);
+		if (!refreshToken) return undefined;
+
+		try {
+			return await this.refreshSession(req, res);
+		} catch (error) {
+			if (error instanceof AuthError || error instanceof JsonWebTokenError) {
+				this.clearCookie(res);
+				return undefined;
+			}
+
+			throw error;
+		}
+	}
+
+	private async issueRefreshCookie(
+		res: Response,
+		user: User,
+		usedMfa: boolean,
+		browserId?: string,
+		currentRefreshToken?: string,
+	) {
+		const refreshToken = randomBytes(32).toString('hex');
+
+		await withTransaction(
+			this.authRefreshTokenRepository.manager,
+			undefined,
+			async (trx: EntityManager) => {
+				if (currentRefreshToken) {
+					await trx.delete(AuthRefreshToken, { tokenHash: this.hash(currentRefreshToken) });
+				}
+
+				await trx.insert(AuthRefreshToken, {
+					tokenHash: this.hash(refreshToken),
+					userId: user.id,
+					browserIdHash: browserId ? this.hash(browserId) : null,
+					userHash: this.createJWTHash(user),
+					usedMfa,
+					expiresAt: new Date(Date.now() + this.refreshTokenExpirationMs),
+				});
+			},
+		);
+
+		this.setRefreshCookie(res, refreshToken);
+	}
+
+	private setRefreshCookie(res: Response, token: string) {
+		const { samesite, secure } = this.globalConfig.auth.cookie;
+		res.cookie(REFRESH_AUTH_COOKIE_NAME, token, {
+			maxAge: this.refreshTokenExpirationMs,
+			httpOnly: true,
+			sameSite: samesite,
+			secure,
+		});
+	}
+
 	/** How many **milliseconds** before expiration should a JWT be renewed. */
 	get jwtRefreshTimeout() {
 		const { jwtRefreshTimeoutHours, jwtSessionDurationHours } = this.globalConfig.userManagement;
@@ -415,5 +587,12 @@ export class AuthService {
 	/** How many **seconds** is an issued JWT valid for. */
 	get jwtExpiration() {
 		return this.globalConfig.userManagement.jwtSessionDurationHours * Time.hours.toSeconds;
+	}
+
+	get refreshTokenExpirationMs() {
+		return Math.max(
+			30 * Time.days.toMilliseconds,
+			this.jwtExpiration * Time.seconds.toMilliseconds,
+		);
 	}
 }

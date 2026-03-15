@@ -93,7 +93,7 @@ export class OidcController {
 
 		res.clearCookie(OIDC_STATE_COOKIE_NAME);
 		res.clearCookie(OIDC_NONCE_COOKIE_NAME);
-		this.authService.issueCookie(res, user, true, req.browserId);
+		await this.authService.issueAuthCookies(res, user, true, req.browserId);
 
 		res.redirect('/');
 	}

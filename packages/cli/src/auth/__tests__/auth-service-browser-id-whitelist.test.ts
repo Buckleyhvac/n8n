@@ -1,5 +1,5 @@
 import type { GlobalConfig } from '@n8n/config';
-import type { InvalidAuthTokenRepository, UserRepository } from '@n8n/db';
+import type { AuthRefreshTokenRepository, InvalidAuthTokenRepository, UserRepository } from '@n8n/db';
 import { mock } from 'jest-mock-extended';
 
 import { AuthService } from '@/auth/auth.service';
@@ -18,6 +18,7 @@ describe('AuthService Browser ID Whitelist', () => {
 		const urlService = mock<UrlService>();
 		const userRepository = mock<UserRepository>();
 		const invalidAuthTokenRepository = mock<InvalidAuthTokenRepository>();
+		const authRefreshTokenRepository = mock<AuthRefreshTokenRepository>();
 		const mfaService = mock<MfaService>();
 
 		authService = new AuthService(
@@ -28,6 +29,7 @@ describe('AuthService Browser ID Whitelist', () => {
 			urlService,
 			userRepository,
 			invalidAuthTokenRepository,
+			authRefreshTokenRepository,
 			mfaService,
 		);
 	});

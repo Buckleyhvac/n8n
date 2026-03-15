@@ -68,6 +68,7 @@ import { CreateProject1714133768519 } from '../common/1714133768519-CreateProjec
 import { MakeExecutionStatusNonNullable1714133768521 } from '../common/1714133768521-MakeExecutionStatusNonNullable';
 import { AddConstraintToExecutionMetadata1720101653148 } from '../common/1720101653148-AddConstraintToExecutionMetadata';
 import { CreateInvalidAuthTokenTable1723627610222 } from '../common/1723627610222-CreateInvalidAuthTokenTable';
+import { CreateAuthRefreshTokenTable1772800000000 } from '../common/1772800000000-CreateAuthRefreshTokenTable';
 import { RefactorExecutionIndices1723796243146 } from '../common/1723796243146-RefactorExecutionIndices';
 import { CreateAnnotationTables1724753530828 } from '../common/1724753530828-CreateExecutionAnnotationTables';
 import { AddApiKeysTable1724951148974 } from '../common/1724951148974-AddApiKeysTable';
@@ -216,6 +217,7 @@ export const postgresMigrations: Migration[] = [
 	AddConstraintToExecutionMetadata1720101653148,
 	FixExecutionMetadataSequence1721377157740,
 	CreateInvalidAuthTokenTable1723627610222,
+	CreateAuthRefreshTokenTable1772800000000,
 	RefactorExecutionIndices1723796243146,
 	CreateAnnotationTables1724753530828,
 	AddApiKeysTable1724951148974,

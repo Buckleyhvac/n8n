@@ -1,10 +1,14 @@
 import type { Request } from 'express';
 
-import { AUTH_COOKIE_NAME } from '@/constants';
+import { AUTH_COOKIE_NAME, REFRESH_AUTH_COOKIE_NAME } from '@/constants';
 
 const BROWSER_ID_COOKIE_NAME = 'n8n-browserId';
 
-const DISALLOWED_COOKIES = new Set([AUTH_COOKIE_NAME, BROWSER_ID_COOKIE_NAME]);
+const DISALLOWED_COOKIES = new Set([
+	AUTH_COOKIE_NAME,
+	REFRESH_AUTH_COOKIE_NAME,
+	BROWSER_ID_COOKIE_NAME,
+]);
 
 /**
  * Removes a cookie with the given name from the request header

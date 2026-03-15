@@ -25,7 +25,13 @@ export class OwnerController {
 	@Post('/setup', { skipAuth: true })
 	async setupOwner(req: AuthenticatedRequest, res: Response, @Body payload: OwnerSetupRequestDto) {
 		const owner = await this.ownershipService.setupOwner(payload);
-		this.authService.issueCookie(res, owner, req.authInfo?.usedMfa ?? false, req.browserId);
+		await this.authService.issueAuthCookies(
+			res,
+			owner,
+			req.authInfo?.usedMfa ?? false,
+			req.browserId,
+			this.authService.getRefreshCookieToken(req),
+		);
 		return await this.userService.toPublic(owner, { posthog: this.postHog, withScopes: true });
 	}
 

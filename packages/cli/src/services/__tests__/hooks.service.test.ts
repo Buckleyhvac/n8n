@@ -55,16 +55,16 @@ describe('HooksService', () => {
 		expect(userService.inviteUsers).toHaveBeenCalledWith(mockedUser, usersToInvite);
 	});
 
-	it('hooksService.issueCookie should call authService.issueCookie', async () => {
+	it('hooksService.issueCookie should call authService.issueAuthCookies', async () => {
 		// ARRANGE
 		const res = mock<Response>();
 		mockedUser.mfaEnabled = false; // Mock mfaEnabled property
 
 		// ACT
-		hooksService.issueCookie(res, mockedUser);
+		await hooksService.issueCookie(res, mockedUser);
 
 		// ASSERT
-		expect(authService.issueCookie).toHaveBeenCalledWith(res, mockedUser, false);
+		expect(authService.issueAuthCookies).toHaveBeenCalledWith(res, mockedUser, false);
 	});
 
 	it('hooksService.findOneUser should call userRepository.findOne', async () => {

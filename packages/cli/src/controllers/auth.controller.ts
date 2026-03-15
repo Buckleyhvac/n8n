@@ -92,7 +92,7 @@ export class AuthController {
 
 		await this.validateMfa(user, mfaCode, mfaRecoveryCode);
 
-		this.authService.issueCookie(res, user, user.mfaEnabled, req.browserId);
+		await this.authService.issueAuthCookies(res, user, user.mfaEnabled, req.browserId);
 
 		this.eventService.emit('user-logged-in', {
 			user,
@@ -192,6 +192,18 @@ export class AuthController {
 			posthog: this.postHog,
 			withScopes: true,
 			mfaAuthenticated: req.authInfo?.usedMfa,
+		});
+	}
+
+	@Post('/refresh', { skipAuth: true })
+	async refresh(req: AuthenticatedRequest, res: Response): Promise<PublicUser> {
+		const [user, { usedMfa }] = await this.authService.refreshSession(req, res);
+		const hydratedUser = await this.userService.findUserWithAuthIdentities(user.id);
+
+		return await this.userService.toPublic(hydratedUser, {
+			posthog: this.postHog,
+			withScopes: true,
+			mfaAuthenticated: usedMfa,
 		});
 	}
 

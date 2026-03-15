@@ -1,6 +1,7 @@
 import { AnnotationTagEntity } from './annotation-tag-entity.ee';
 import { AnnotationTagMapping } from './annotation-tag-mapping.ee';
 import { ApiKey } from './api-key';
+import { AuthRefreshToken } from './auth-refresh-token';
 import { AuthIdentity } from './auth-identity';
 import { AuthProviderSyncHistory } from './auth-provider-sync-history';
 import { BinaryDataFile, SourceTypeSchema, type SourceType } from './binary-data-file';
@@ -40,6 +41,7 @@ import { WorkflowTagMapping } from './workflow-tag-mapping';
 
 export {
 	InvalidAuthToken,
+	AuthRefreshToken,
 	ProcessedData,
 	Settings,
 	Variables,
@@ -84,6 +86,7 @@ export {
 
 export const entities = {
 	InvalidAuthToken,
+	AuthRefreshToken,
 	ProcessedData,
 	Settings,
 	Variables,
