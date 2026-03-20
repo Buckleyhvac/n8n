@@ -3,3 +3,9 @@ n8n:
     enabled: true
     type: NodePort
     port: 5678
+  main:
+    extraEnvVars:
+      N8N_HOST: n8n.buckleyppma.com
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://n8n.buckleyppma.com
+      N8N_SECURE_COOKIE: "true"
